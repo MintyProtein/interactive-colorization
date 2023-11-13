@@ -1,0 +1,71 @@
+import cv2
+import numpy as np
+import torch
+import einops
+from utils import *
+from ldm.util import instantiate_from_config
+from cldm.ddim_hacked import DDIMSampler
+from cldm.model import load_state_dict
+class BaseColorizer:
+    def colorize_target(self, lineart, color_current, target_mask):
+        return NotImplementedError()
+
+
+class ControlNetColorizer(BaseColorizer):  
+    def __init__(self, ldm_checkpoint, cldm_checkpoint, model_config, prompt, n_prompt, *args, **kwargs):
+        self.model = instantiate_from_config(model_config)
+        self.model.load_state_dict(load_state_dict(ldm_checkpoint, location='cuda'), strict=False)
+        self.model.load_state_dict(load_state_dict(cldm_checkpoint, location='cuda'), strict=False)
+        self.model.cuda()
+        self.sampler = DDIMSampler(self.model)
+        
+        self.prompt = prompt
+        self.n_prompt = n_prompt
+        return
+    
+    def colorize_target(self, input_img, target_mask, ddim_steps, color_mask=None, num_samples=1, eta=1.0, scale=9.0, strength=1):
+        with torch.no_grad():
+            H, W, C = input_img.shape
+            assert (H,W) == target_mask.shape
+            img_pixel_batched = input_img.copy()[None]
+            target_mask_batched = target_mask.copy()[None, :, :, None]
+            
+            if color_mask is not None:    
+                assert (H,W) == color_mask.shape
+                mask_latent = cv2.resize(color_mask, (W // 8, H // 8), interpolation=cv2.INTER_AREA)
+                
+                mask_latent = 1.0 - torch.from_numpy(mask_latent.copy()).float().cuda()
+                mask_latent = torch.stack([mask_latent for _ in range(num_samples)], dim=0)
+                mask_latent = einops.rearrange(mask_latent, 'b h w -> b 1 h w').clone()
+                
+                x0 = torch.from_numpy(input_img.copy()).float().cuda() / 127.0 - 1.0
+                x0 = torch.stack([x0 for _ in range(num_samples)], dim=0)
+                x0 = einops.rearrange(x0, 'b h w c -> b c h w').clone()
+                x0 = self.model.get_first_stage_encoding(self.model.encode_first_stage(x0))
+            else:
+                mask_latent = None
+                x0 = None
+                
+            control = 1.0 - torch.from_numpy(input_img.copy()).float().cuda() / 255.0
+            control = torch.unsqueeze(control, 0)
+            control = einops.rearrange(control, 'b h w c -> b c h w').clone()
+
+            cond = {"c_concat": [control], "c_crossattn": [self.model.get_learned_conditioning([self.prompt] * num_samples)]}
+            un_cond = {"c_concat": [control], "c_crossattn": [self.model.get_learned_conditioning([self.n_prompt] * num_samples)]}
+            shape = (4, H // 8, W // 8)
+            
+            self.model.control_scales = [strength] * 13 
+            
+            self.sampler.make_schedule(ddim_steps, ddim_eta=eta, verbose=True)
+            samples, intermediates = self.sampler.sample(ddim_steps, num_samples,
+                                                        shape, cond, mask=mask_latent, x0=x0,
+                                                        verbose=False, eta=eta,
+                                                        unconditional_guidance_scale=scale,
+                                                        unconditional_conditioning=un_cond)
+            
+            x_samples = self.model.decode_first_stage(samples)
+            x_samples = (einops.rearrange(x_samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().astype(np.float32)
+            x_samples = x_samples * target_mask_batched + img_pixel_batched * (1.0 - target_mask_batched)
+            results = [x_samples[i] for i in range(num_samples)]
+            
+            return results
