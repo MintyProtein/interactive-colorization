@@ -1,8 +1,8 @@
 import numpy as np
 from .processing import *
-from models.regionSelecter import *
-from models.colorizer import *
-from models.segmenter import *
+from regionSelecter import *
+from colorizer import *
+from segmenter import *
 
 class InteractiveColorNet:
     def __init__(self, colorizer: BaseColorizer, segmenter: BaseSegmenter, region_selecter: BaseRegionSelecter):        
