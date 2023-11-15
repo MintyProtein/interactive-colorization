@@ -1,80 +1,6 @@
-import random
-
+import importlib
 import numpy as np
-import cv2
-import os
-
-
-annotator_ckpts_path = os.path.join(os.path.dirname(__file__), 'ckpts')
-
-
-def HWC3(x):
-    assert x.dtype == np.uint8
-    if x.ndim == 2:
-        x = x[:, :, None]
-    assert x.ndim == 3
-    H, W, C = x.shape
-    assert C == 1 or C == 3 or C == 4
-    if C == 3:
-        return x
-    if C == 1:
-        return np.concatenate([x, x, x], axis=2)
-    if C == 4:
-        color = x[:, :, 0:3].astype(np.float32)
-        alpha = x[:, :, 3:4].astype(np.float32) / 255.0
-        y = color * alpha + 255.0 * (1.0 - alpha)
-        y = y.clip(0, 255).astype(np.uint8)
-        return y
-
-def pad_resize(input_image, target_size, pad_value=0):
-    H, W, C = input_image.shape
-    
-    # Resize the image. 
-    max_length = max(H, W)
-    scale = target_size / max_length
-    new_H = int(H * scale)
-    new_W = int(W * scale)
-    image_resized = cv2.resize(input_image, (new_W, new_H), cv2.INTER_AREA)
-    
-    # Pad the image
-    pad_height = target_size - new_H
-    pad_width = target_size - new_W
-    top_pad = pad_height // 2
-    bottom_pad = pad_height - top_pad
-    left_pad = pad_width // 2
-    right_pad = pad_width - left_pad
-    image_padded = np.pad(image_resized, ((top_pad, bottom_pad), (left_pad, right_pad), (0, 0)), mode='constant', constant_values=pad_value)
-    
-    return image_padded, (top_pad, bottom_pad, left_pad, right_pad)
-
-
-def nms(x, t, s):
-    x = cv2.GaussianBlur(x.astype(np.float32), (0, 0), s)
-
-    f1 = np.array([[0, 0, 0], [1, 1, 1], [0, 0, 0]], dtype=np.uint8)
-    f2 = np.array([[0, 1, 0], [0, 1, 0], [0, 1, 0]], dtype=np.uint8)
-    f3 = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.uint8)
-    f4 = np.array([[0, 0, 1], [0, 1, 0], [1, 0, 0]], dtype=np.uint8)
-
-    y = np.zeros_like(x)
-
-    for f in [f1, f2, f3, f4]:
-        np.putmask(y, cv2.dilate(x, kernel=f) == x, x)
-
-    z = np.zeros_like(y, dtype=np.uint8)
-    z[y > t] = 255
-    return z
-
-
-def make_noise_disk(H, W, C, F):
-    noise = np.random.uniform(low=0, high=1, size=((H // F) + 2, (W // F) + 2, C))
-    noise = cv2.resize(noise, (W + 2 * F, H + 2 * F), interpolation=cv2.INTER_CUBIC)
-    noise = noise[F: F + H, F: F + W]
-    noise -= np.min(noise)
-    noise /= np.max(noise)
-    if C == 1:
-        noise = noise[:, :, None]
-    return noise
+import matplotlib.pyplot as plt
 
 
 def min_max_norm(x):
@@ -82,25 +8,32 @@ def min_max_norm(x):
     x /= np.maximum(np.max(x), 1e-5)
     return x
 
+def show_segmap(segmentation_map, n_labels=None):
+    assert segmentation_map.ndim == 2
+    if n_labels is None:
+        n_labels = len(np.unique(segmentation_map))
+  
+    map_color = np.zeros_like(segmentation_map)[:, :, None]
+    map_color = np.concatenate((map_color, map_color, map_color), axis=2)
+    
+    for i in range(1, n_labels):
+        map_color[segmentation_map==i] = [int(j) for j in np.random.randint(0,255,3)]
+        
+    plt.imshow(map_color)
 
-def safe_step(x, step=2):
-    y = x.astype(np.float32) * float(step + 1)
-    y = y.astype(np.int32).astype(np.float32) / float(step)
-    return y
+def instantiate_from_config(config):
+    if not "target" in config:
+        if config == '__is_first_stage__':
+            return None
+        elif config == "__is_unconditional__":
+            return None
+        raise KeyError("Expected key `target` to instantiate.")
+    return get_obj_from_str(config["target"])(**config.get("params", dict()))
 
 
-def img2mask(img, H, W, low=10, high=90):
-    assert img.ndim == 3 or img.ndim == 2
-    assert img.dtype == np.uint8
-
-    if img.ndim == 3:
-        y = img[:, :, random.randrange(0, img.shape[2])]
-    else:
-        y = img
-
-    y = cv2.resize(y, (W, H), interpolation=cv2.INTER_CUBIC)
-
-    if random.uniform(0, 1) < 0.5:
-        y = 255 - y
-
-    return y < np.percentile(y, random.randrange(low, high))
+def get_obj_from_str(string, reload=False):
+    module, cls = string.rsplit(".", 1)
+    if reload:
+        module_imp = importlib.import_module(module)
+        importlib.reload(module_imp)
+    return getattr(importlib.import_module(module, package=None), cls)

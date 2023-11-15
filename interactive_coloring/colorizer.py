@@ -7,15 +7,14 @@ from ldm.util import instantiate_from_config
 from cldm.ddim_hacked import DDIMSampler
 from cldm.model import load_state_dict
 class BaseColorizer:
-    def colorize_target(self, lineart, color_current, target_mask):
-        return NotImplementedError()
+    def colorize_target(self, color_current, target_mask):
+        raise NotImplementedError
+        return 
 
 
 class ControlNetColorizer(BaseColorizer):  
-    def __init__(self, ldm_checkpoint, cldm_checkpoint, model_config, prompt, n_prompt, *args, **kwargs):
+    def __init__(self, model_config, prompt, n_prompt, *args, **kwargs):
         self.model = instantiate_from_config(model_config)
-        self.model.load_state_dict(load_state_dict(ldm_checkpoint, location='cuda'), strict=False)
-        self.model.load_state_dict(load_state_dict(cldm_checkpoint, location='cuda'), strict=False)
         self.model.cuda()
         self.sampler = DDIMSampler(self.model)
         
@@ -23,7 +22,15 @@ class ControlNetColorizer(BaseColorizer):
         self.n_prompt = n_prompt
         return
     
-    def colorize_target(self, input_img, target_mask, ddim_steps, color_mask=None, num_samples=1, eta=1.0, scale=9.0, strength=1):
+    def load_checkpoint(self, ldm_path="./models/anything-v3-full.safetensors",
+                        cldm_path="./models/control_v11p_sd15s2_lineart_anime.pth"):
+        self.model.load_state_dict(load_state_dict(ldm_path, location='cuda'), strict=False)
+        self.model.load_state_dict(load_state_dict(cldm_path, location='cuda'), strict=False)
+
+    def colorize_target(self, input_img,
+                        target_mask,prompt="", ddim_steps=20,
+                        color_mask=None, num_samples=1, 
+                        eta=1.0, scale=8.0, strength=1.3):
         with torch.no_grad():
             H, W, C = input_img.shape
             assert (H,W) == target_mask.shape
@@ -42,6 +49,8 @@ class ControlNetColorizer(BaseColorizer):
                 x0 = torch.stack([x0 for _ in range(num_samples)], dim=0)
                 x0 = einops.rearrange(x0, 'b h w c -> b c h w').clone()
                 x0 = self.model.get_first_stage_encoding(self.model.encode_first_stage(x0))
+                
+                self.sampler.make_schedule(ddim_steps, ddim_eta=eta, verbose=False)
             else:
                 mask_latent = None
                 x0 = None
@@ -50,13 +59,12 @@ class ControlNetColorizer(BaseColorizer):
             control = torch.unsqueeze(control, 0)
             control = einops.rearrange(control, 'b h w c -> b c h w').clone()
 
-            cond = {"c_concat": [control], "c_crossattn": [self.model.get_learned_conditioning([self.prompt] * num_samples)]}
+            cond = {"c_concat": [control], "c_crossattn": [self.model.get_learned_conditioning([prompt + ","+ self.prompt] * num_samples)]}
             un_cond = {"c_concat": [control], "c_crossattn": [self.model.get_learned_conditioning([self.n_prompt] * num_samples)]}
             shape = (4, H // 8, W // 8)
             
             self.model.control_scales = [strength] * 13 
             
-            self.sampler.make_schedule(ddim_steps, ddim_eta=eta, verbose=True)
             samples, intermediates = self.sampler.sample(ddim_steps, num_samples,
                                                         shape, cond, mask=mask_latent, x0=x0,
                                                         verbose=False, eta=eta,
@@ -64,7 +72,7 @@ class ControlNetColorizer(BaseColorizer):
                                                         unconditional_conditioning=un_cond)
             
             x_samples = self.model.decode_first_stage(samples)
-            x_samples = (einops.rearrange(x_samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().astype(np.float32)
+            x_samples = (einops.rearrange(x_samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().clip(0, 255).astype(np.uint8)
             x_samples = x_samples * target_mask_batched + img_pixel_batched * (1.0 - target_mask_batched)
             results = [x_samples[i] for i in range(num_samples)]
             
