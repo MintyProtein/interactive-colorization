@@ -28,9 +28,10 @@ class ControlNetColorizer(BaseColorizer):
         self.model.load_state_dict(load_state_dict(cldm_path, location='cuda'), strict=False)
 
     def colorize_target(self, input_img,
-                        target_mask,prompt="", ddim_steps=20,
+                        target_mask, prompt="", ddim_steps=20,
                         color_mask=None, num_samples=1, 
-                        eta=1.0, scale=8.0, strength=1.3):
+                        eta=1.0, scale=6.0, strength=1.3, guess_mode=False):
+        
         with torch.no_grad():
             H, W, C = input_img.shape
             assert (H,W) == target_mask.shape
@@ -60,10 +61,10 @@ class ControlNetColorizer(BaseColorizer):
             control = einops.rearrange(control, 'b h w c -> b c h w').clone()
 
             cond = {"c_concat": [control], "c_crossattn": [self.model.get_learned_conditioning([prompt + ","+ self.prompt] * num_samples)]}
-            un_cond = {"c_concat": [control], "c_crossattn": [self.model.get_learned_conditioning([self.n_prompt] * num_samples)]}
+            un_cond = {"c_concat": None if guess_mode else [control], "c_crossattn": [self.model.get_learned_conditioning([self.n_prompt] * num_samples)]}
             shape = (4, H // 8, W // 8)
             
-            self.model.control_scales = [strength] * 13 
+            self.model.control_scales = [strength * (0.825 ** float(12 - i)) for i in range(13)] if guess_mode else [strength] * 13 
             
             samples, intermediates = self.sampler.sample(ddim_steps, num_samples,
                                                         shape, cond, mask=mask_latent, x0=x0,

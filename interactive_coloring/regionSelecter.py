@@ -20,7 +20,7 @@ class RandomRegionSelecter(BaseRegionSelecter):
         n_next = min(len(uncolored_labels), n_target)
         next_labels = np.random.choice(uncolored_labels, size=n_next, replace=False)
         for label in next_labels: 
-            target_mask[segmentation_map==label] = 1
+            target_mask[(segmentation_map==label) & (gray == 255)] = 1
             
         return target_mask
     

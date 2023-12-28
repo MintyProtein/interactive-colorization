@@ -3,4 +3,6 @@
 *.pyc
 __pycache__/
 *.safetensors
-models/*
+*.pth
+*.pt
+*.ckpt
