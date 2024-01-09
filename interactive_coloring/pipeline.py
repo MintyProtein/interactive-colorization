@@ -47,7 +47,7 @@ class InteractiveColoringPipeLine:
             print(f"Succesfully set new lineart. # of Segmentation Regions: {self.num_regions}")
   
     def update_color(self, new_color: np.ndarray) -> None:
-        assert new_color.shape == self._color.shape
+        new_color = preprocess_color(new_color, self.resolution)
         self._color = new_color
         
     def user_turn_coloring(self, user_coloring: np.ndarray) -> None:

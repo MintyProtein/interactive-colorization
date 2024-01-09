@@ -51,9 +51,12 @@ def pad_to_square(input_img, pad_value=0):
     bottom_pad = pad_height - top_pad
     left_pad = pad_width // 2
     right_pad = pad_width - left_pad
-     
-    image_padded = np.pad(input_img, ((top_pad, bottom_pad), (left_pad, right_pad)), mode='constant', constant_values=pad_value)
     
+    if C is not None:
+        image_padded = np.pad(input_img, ((top_pad, bottom_pad), (left_pad, right_pad), (0,0)), mode='constant', constant_values=pad_value)
+    else:
+        image_padded = np.pad(input_img, ((top_pad, bottom_pad), (left_pad, right_pad)), mode='constant', constant_values=pad_value)
+
     return image_padded, (top_pad, bottom_pad, left_pad, right_pad)
 
 
@@ -66,8 +69,11 @@ def preprocess_lineart(lineart: np.ndarray, resolution, pad_value=0):
     gray = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 21, 5).astype(np.uint8)
     gray, pad_info = pad_to_square(gray, pad_value=pad_value)
     return gray, pad_info
-def preprocess_color():
-    return NotImplementedError()
+
+def preprocess_color(img, resolution, pad_value=0):
+    color = resize_longest_side(img, target_size=resolution)
+    color, pad_info = pad_to_square(color, pad_value=pad_value)
+    return color
 
 def postprocess():
     return NotImplementedError()

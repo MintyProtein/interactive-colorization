@@ -11,7 +11,7 @@ regionSelecter_config:
 colorizer_config:
   target: interactive_coloring.colorizer.ControlNetColorizer
   params:
-    prompt: "for kids, colorful, vivid in color"
+    prompt: "for kids"
     n_prompt: "lowres, worst quality, low quality, ultra-detailed"
     model_config:
       target: cldm.cldm.ControlLDM
